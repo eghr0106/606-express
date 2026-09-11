@@ -684,7 +684,7 @@ function consolidar(lista){
     /* La clave es el NCF mas el proveedor: cada emisor lleva su propia
        secuencia, asi que dos proveedores distintos pueden repetir un numero y
        no deben mezclarse en un mismo registro. */
-    const k = f.ncf + " " + (f.rnc || f.proveedor || "");
+    const k = f.ncf + " :: " + (f.rnc || f.proveedor || "");
     let g = mapa.get(k);
     if (!g){
       g = {rnc:f.rnc, ncf:f.ncf, proveedor:f.proveedor, fecha:f.fecha, tipo:f.tipo,
