@@ -244,9 +244,9 @@ footer a{color:var(--accent)}
     <div class="step-head"><span class="step-n">2</span><span class="step-t">Revisa antes de generar</span></div>
     <div class="sum">
       <div><dt>Período</dt><dd id="s-per">—</dd></div>
-      <div><dt>Registros</dt><dd id="s-tot">0</dd></div>
-      <div><dt>Se incluirán</dt><dd id="s-ok" class="good">0</dd></div>
+      <div><dt>Transacciones</dt><dd id="s-tot">0</dd></div>
       <div><dt>Con problemas</dt><dd id="s-bad" class="bad">0</dd></div>
+      <div><dt>Irán al 606</dt><dd id="s-ok" class="good">0</dd></div>
       <div><dt>Monto</dt><dd id="s-monto">0.00</dd></div>
       <div><dt>ITBIS</dt><dd id="s-itbis">0.00</dd></div>
     </div>
@@ -281,6 +281,10 @@ footer a{color:var(--accent)}
   <section class="step">
     <div class="step-head"><span class="step-n">3</span><span class="step-t">Genera el archivo</span></div>
     <div class="bar">
+      <div class="field hidden" id="mes-campo">
+        <label for="mes-elegido">Mes a reportar</label>
+        <select id="mes-elegido"></select>
+      </div>
       <button class="btn" id="gen">Descargar 606</button>
       <span class="hint" id="gen-hint"></span>
     </div>
@@ -371,6 +375,17 @@ function leer(f){
 
 /* ─── Normalización ─── */
 const digitos = v => String(v||"").replace(/\D/g,"");
+
+/* La columna «Descripción» es texto libre: a veces solo el RNC ("101618787"),
+   a veces el RNC pegado al concepto ("101001577-Servicio Claro AGOSTO 2026").
+   Se busca un numero suelto de 9 u 11 digitos en vez de juntar todos los
+   digitos de la linea, que produciria RNC inventados a partir del texto. */
+function extraerRnc(v){
+  const t = String(v||"");
+  const m = t.match(/(?<!\d)(\d{11}|\d{9})(?!\d)/);
+  // sin un numero valido se devuelven los digitos crudos para poder avisar del error
+  return m ? m[1] : digitos(t);
+}
 const num = v => {
   const n = parseFloat(String(v||"").replace(/[^\d.-]/g,""));
   return isNaN(n) ? 0 : n;
@@ -401,6 +416,19 @@ function procesar(raw){
     document.getElementById("result").classList.remove("hidden");
     return;
   }
+  /* QuickBooks solo pone el RNC (y a veces el proveedor) en la primera linea de
+     cada factura; las siguientes lo dejan vacio. Se recorre una vez para saber
+     que RNC corresponde a cada NCF y no descartar esas lineas como "sin RNC". */
+  const rncPorNcf = new Map(), nombrePorNcf = new Map();
+  for (let i = hi + 1; i < raw.length; i++){
+    const r = raw[i]; if (!r) continue;
+    const n = String(r[iNum]||"").trim().toUpperCase();
+    const d = extraerRnc(r[iDesc]);
+    if (n && (d.length === 9 || d.length === 11) && !rncPorNcf.has(n)) rncPorNcf.set(n, d);
+    const nom = String(r[iNom]||"").trim();
+    if (n && nom && !nombrePorNcf.has(n)) nombrePorNcf.set(n, nom);
+  }
+
   filas = [];
   for (let i = hi + 1; i < raw.length; i++){
     const r = raw[i];
@@ -408,8 +436,10 @@ function procesar(raw){
     const f = aFecha(r[iFecha]);
     if (!f) continue;
 
-    const rnc = digitos(r[iDesc]);
     const ncf = String(r[iNum]||"").trim().toUpperCase();
+    const rncLinea = extraerRnc(r[iDesc]);
+    const rnc = (rncLinea.length === 9 || rncLinea.length === 11)
+              ? rncLinea : (rncPorNcf.get(ncf) || rncLinea);
     const tipoTx = String(r[iTipo]||"").trim();
     const {tipo, clase} = clasificar(r[iCta]);
     const esNota = /cr[eé]dito/i.test(tipoTx);
@@ -424,7 +454,7 @@ function procesar(raw){
 
     filas.push({
       fecha:f, fechaTxt:`${f.d}/${f.m}/${f.a}`,
-      proveedor:String(r[iNom]||"").trim(),
+      proveedor:String(r[iNom]||"").trim() || nombrePorNcf.get(ncf) || "",
       rnc, ncf, cuenta:String(r[iCta]||"").trim(),
       tipo, clase,
       monto:num(r[iImp]) * signo, itbis:num(r[iItb]) * signo,
@@ -498,10 +528,14 @@ function revalidar(f){
 function resumen(){
   const inc = filas.filter(f => f.incluir);
   const bad = filas.filter(f => f.problemas.length).length;
-  const per = filas.length ? `${filas[0].fecha.m}/${filas[0].fecha.a}` : "—";
+  const meses = [...new Set(inc.map(f => f.fecha.a + f.fecha.m))].sort();
+  const per = !meses.length ? "—"
+            : meses.length === 1 ? `${meses[0].slice(4)}/${meses[0].slice(0,4)}`
+            : `${meses.length} meses`;
   document.getElementById("s-per").textContent = per;
   document.getElementById("s-tot").textContent = filas.length;
-  document.getElementById("s-ok").textContent = inc.length;
+  const registros = consolidar(inc).length;
+  document.getElementById("s-ok").textContent = registros;
   document.getElementById("s-bad").textContent = bad;
   document.getElementById("s-monto").textContent =
       inc.reduce((a,f) => a + f.monto, 0).toLocaleString("es-DO",{minimumFractionDigits:2, maximumFractionDigits:2});
@@ -511,8 +545,15 @@ function resumen(){
   pintarProblemas();
 
   document.getElementById("result").classList.remove("hidden");
+  /* QuickBooks parte facturas en varias lineas; conviene decir cuantos
+     comprobantes saldran realmente, que es lo que cuenta la DGII. */
+  const unidas = inc.length - registros;
   document.getElementById("filtro-hint").textContent =
-      `${filas.length} transacciones leídas del informe`;
+      `${filas.length} transacciones leídas` +
+      (unidas > 0
+        ? ` — ${inc.length} se agrupan en ${registros} comprobantes, porque QuickBooks`
+          + ` divide una misma factura en varias líneas`
+        : "");
 }
 
 
@@ -629,7 +670,47 @@ document.getElementById("filtros").onclick = e => {
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 /* ─── Generación del TXT ─── */
+/* Los importes opcionales van vacios cuando no aplican; el total facturado
+   (campo 10) siempre lleva cifra, aunque la factura se neutralice en 0.00. */
 function monto(v){ return v ? v.toFixed(2) : ""; }
+function montoObligatorio(v){ return (v || 0).toFixed(2); }
+
+/* QuickBooks parte una misma factura en varias lineas (el servicio y sus
+   recargos, o una compra repartida entre dos cuentas contables). La DGII
+   exige un solo registro por NCF, asi que se suman antes de escribir. */
+function consolidar(lista){
+  const mapa = new Map();
+  for (const f of lista){
+    /* La clave es el NCF mas el proveedor: cada emisor lleva su propia
+       secuencia, asi que dos proveedores distintos pueden repetir un numero y
+       no deben mezclarse en un mismo registro. */
+    const k = f.ncf + " " + (f.rnc || f.proveedor || "");
+    let g = mapa.get(k);
+    if (!g){
+      g = {rnc:f.rnc, ncf:f.ncf, proveedor:f.proveedor, fecha:f.fecha, tipo:f.tipo,
+           servicios:0, bienes:0, monto:0, itbis:0, partes:0, mayor:0};
+      mapa.set(k, g);
+    }
+    if (!g.rnc && f.rnc) g.rnc = f.rnc;
+    // el tipo de gasto lo define la linea de mayor monto: es el gasto principal
+    if (Math.abs(f.monto) > g.mayor){ g.mayor = Math.abs(f.monto); g.tipo = f.tipo; }
+    if (f.clase === "S") g.servicios += f.monto; else g.bienes += f.monto;
+    g.monto += f.monto;
+    g.itbis += f.itbis;
+    g.partes++;
+    const actual = g.fecha.a + g.fecha.m + g.fecha.d;
+    const otra   = f.fecha.a + f.fecha.m + f.fecha.d;
+    if (otra < actual) g.fecha = f.fecha;   // se reporta la fecha del comprobante
+  }
+  return [...mapa.values()];
+}
+
+/* El periodo es el mes de los comprobantes. Si el archivo mezcla meses no hay
+   forma de adivinar cual reportar: se devuelve null y se le pregunta. */
+function periodoDe(lista){
+  const meses = [...new Set(lista.map(f => f.fecha.a + f.fecha.m))];
+  return meses.length === 1 ? meses[0] : null;
+}
 
 document.getElementById("gen").onclick = () => {
   const rncEmpresa = digitos(document.getElementById("rnc").value);
@@ -642,10 +723,29 @@ document.getElementById("gen").onclick = () => {
   const inc = filas.filter(f => f.incluir);
   if (!inc.length){ hint.textContent = "No hay registros válidos que incluir."; return; }
 
-  const periodo = `${inc[0].fecha.a}${inc[0].fecha.m}`;
-  const lineas = inc.map(f => {
-    const servicios = f.clase === "S" ? f.monto : 0;
-    const bienes    = f.clase === "B" ? f.monto : 0;
+  let periodo = periodoDe(inc);
+  if (!periodo){
+    // el archivo mezcla meses: la DGII pide un envio por mes, no se puede adivinar
+    const meses = [...new Set(inc.map(f => f.fecha.a + f.fecha.m))].sort();
+    const elegido = document.getElementById("mes-elegido").value;
+    if (!meses.includes(elegido)){
+      mostrarSelectorDeMes(meses);
+      hint.textContent = "Este archivo trae varios meses. Elige cual reportar.";
+      return;
+    }
+    periodo = elegido;
+  }
+  const delMes = inc.filter(f => f.fecha.a + f.fecha.m === periodo);
+
+  /* Si una parte de una factura quedo excluida, el total del NCF saldria corto
+     sin que se note. Mejor avisar antes de generar el archivo. */
+  const clavesIncluidas = new Set(delMes.map(f => f.ncf));
+  const partidos = [...new Set(filas
+    .filter(f => !f.incluir && f.ncf && clavesIncluidas.has(f.ncf))
+    .map(f => f.ncf))];
+  if (partidos.length && !confirmarParcial(partidos)) return;
+
+  const lineas = consolidar(delMes).map(f => {
     return [
       f.rnc,                                   // 1  RNC del proveedor
       f.rnc.length === 9 ? "1" : "2",          // 2  tipo de identificación
@@ -654,9 +754,9 @@ document.getElementById("gen").onclick = () => {
       "",                                      // 5  NCF modificado
       `${f.fecha.a}${f.fecha.m}${f.fecha.d}`,  // 6  fecha del comprobante
       "",                                      // 7  fecha de pago
-      monto(servicios),                        // 8  monto en servicios
-      monto(bienes),                           // 9  monto en bienes
-      monto(f.monto),                          // 10 total facturado
+      monto(f.servicios),                      // 8  monto en servicios
+      monto(f.bienes),                         // 9  monto en bienes
+      montoObligatorio(f.monto),               // 10 total facturado
       monto(f.itbis),                          // 11 ITBIS facturado
       "",                                      // 12 ITBIS retenido
       "",                                      // 13 ITBIS proporcionalidad
@@ -682,12 +782,35 @@ document.getElementById("gen").onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 
-  hint.textContent = `${nombre} — ${lineas.length} registros`;
+  hint.textContent = `${nombre} — ${lineas.length} ${lineas.length === 1 ? "registro" : "registros"}`;
   const pre = document.getElementById("preview");
   pre.classList.remove("hidden");
   pre.textContent = [`606|${rncEmpresa}|${periodo}|${lineas.length}`, ...lineas.slice(0,6)].join("\n")
                   + (lineas.length > 6 ? `\n… ${lineas.length - 6} registros más` : "");
 };
+
+/* Avisa cuando un NCF entra al archivo con solo parte de sus lineas: el monto
+   declarado seria menor al de la factura real. */
+function confirmarParcial(ncfs){
+  const lista = ncfs.slice(0, 5).join(", ") + (ncfs.length > 5 ? `, y ${ncfs.length - 5} mas` : "");
+  return confirm(
+    `Estos comprobantes tienen lineas excluidas: ${lista}.
+
+` +
+    `El monto que se declare sera menor al de la factura completa. ` +
+    `Revisa esas lineas o continua si estas seguro.`);
+}
+
+/* Un envio del 606 cubre un solo mes. Si el informe trae mas de uno, se
+   muestran para que el usuario escoja, en vez de asumir por el. */
+const MES = ["enero","febrero","marzo","abril","mayo","junio","julio",
+             "agosto","septiembre","octubre","noviembre","diciembre"];
+function mostrarSelectorDeMes(meses){
+  const sel = document.getElementById("mes-elegido");
+  sel.innerHTML = meses.map(m =>
+    `<option value="${m}">${MES[+m.slice(4) - 1]} ${m.slice(0,4)}</option>`).join("");
+  document.getElementById("mes-campo").classList.remove("hidden");
+}
 
 /* RNC recordado entre visitas */
 const rncInput = document.getElementById("rnc");
