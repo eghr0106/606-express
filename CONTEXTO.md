@@ -21,8 +21,8 @@ Dominicana).
 
 Estas vienen del usuario y no se cambian sin preguntarle:
 
-1. **Es un proyecto aparte.** No tiene relación con la migración de Odoo que se
-   trabaja en `C:\projects\Customers\CleanProfessional\`. No lo mezcles.
+1. **Es un proyecto independiente.** Vive solo en este repositorio y no se
+   integra con ningún otro sistema. No lo mezcles con otros proyectos.
 2. **Sin datos de la empresa.** Nada de nombres, RNC reales, ni logos. El repo es
    público. El RNC lo escribe el usuario y se guarda solo en su `localStorage`.
 3. **Simple:** subir → procesar → descargar. Nada más.
@@ -99,8 +99,9 @@ cuenta o por nombre). El default cuando nada calza es `02` / servicio.
 
 ## Estado actual: verificado contra el informe real de agosto 2026
 
-Archivo de prueba (**no está en el repo**, tiene datos reales del cliente):
-`C:\projects\Customers\CleanProfessional\cleanImplementation\temp\Relacion 606 Agosto 2026.xlsx`
+Archivo de prueba: un informe real de agosto 2026 exportado de QuickBooks.
+**No está en el repo y no debe subirse** — son datos contables reales. Quien
+retome esto necesita pedirlo o exportar uno equivalente.
 
 | Dato | Valor |
 |---|---|
@@ -212,17 +213,3 @@ Nada de esto está comprometido con el usuario — son opciones, no tareas.
       catálogos distintos — no los confundas.
 - [ ] `MAPEO` configurable desde la interfaz, para que sirva a otra empresa sin
       tocar código.
-
----
-
-## Relación con el proyecto de Odoo
-
-Ninguna en el código — **son cosas separadas y el usuario fue explícito en eso**.
-
-Vale saber que existe porque el conocimiento del formato 606 vino de ahí: el
-módulo `efel_l10n_do_dgii` (en `C:\projects\Customers\efel-odoo-addons\`) genera
-606/607/608 desde Odoo 18 Community, tiene 16 tests y un `VALIDACIONES-DGII.md`
-con las reglas extraídas del validador oficial de la DGII. **Si necesitas
-detalles finos del formato, ese archivo es la mejor fuente.** Pero no importes
-código de un lado al otro: uno es un módulo Python para Odoo, el otro una página
-estática.
