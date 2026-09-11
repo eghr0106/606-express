@@ -465,11 +465,10 @@ function procesar(raw){
     const esNota = /cr[eé]dito/i.test(tipoTx);
     const signo = esNota ? -1 : 1;
 
+    // el tipo de transaccion solo lo trae el informe; las demas reglas las
+    // aplica revalidar(), para que una fila del archivo y una escrita a mano
+    // se midan con la misma vara
     const problemas = [];
-    if (!rnc) problemas.push("sin RNC");
-    else if (rnc.length !== 9 && rnc.length !== 11) problemas.push(`RNC de ${rnc.length} dígitos`);
-    if (!ncf) problemas.push("sin NCF");
-    else if (!/^[BE]\d{10,12}$/.test(ncf)) problemas.push("NCF con formato inusual");
     if (!/factura de proveedor|cr[eé]dito de proveedor/i.test(tipoTx)) problemas.push(tipoTx.toLowerCase());
 
     filas.push({
@@ -480,6 +479,7 @@ function procesar(raw){
       monto:num(r[iImp]) * signo, itbis:num(r[iItb]) * signo,
       problemas, incluir: problemas.length === 0,
     });
+    revalidar(filas[filas.length - 1]);
   }
   pintar();
 }
@@ -549,12 +549,21 @@ function pintar(){
       pintarProblemas();
     } else if (k === "monto" || k === "itbis"){
       f[k] = parseFloat(t.value) || 0;
+      revalidar(f);                 // el monto tambien decide si la fila es valida
+      marcarEstado(t, f);
+      pintarProblemas();
     } else if (k === "fecha"){
       const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t.value);
       if (m){
         f.fecha = {a:m[1], m:m[2], d:m[3]};
         f.fechaTxt = `${m[3]}/${m[2]}/${m[1]}`;
+      } else {
+        f.fecha = {a:"", m:"", d:""};   // el campo quedo vacio o incompleto
+        f.fechaTxt = "";
       }
+      revalidar(f);
+      marcarEstado(t, f);
+      pintarProblemas();
     }
     resumen();
   };
@@ -574,14 +583,40 @@ function pintar(){
 
 function revalidar(f){
   const antes = f.problemas.length > 0;
-  f.problemas = [];
+  // el tipo de transaccion viene del informe y no se puede corregir aqui
+  f.problemas = f.problemas.filter(p => claveProblema(p) === "otro-tipo");
   if (!f.rnc) f.problemas.push("sin RNC");
   else if (f.rnc.length !== 9 && f.rnc.length !== 11) f.problemas.push(`RNC de ${f.rnc.length} dígitos`);
   if (!f.ncf) f.problemas.push("sin NCF");
   else if (!/^[BE]\d{10,12}$/.test(f.ncf)) f.problemas.push("NCF con formato inusual");
+
+  // Reglas de importe: la DGII rechaza el archivo completo por cualquiera de
+  // estas, y en una fila escrita a mano son faciles de cometer.
+  if (!f.monto) f.problemas.push("sin monto");
+  if (f.itbis && Math.abs(f.itbis) > Math.abs(f.monto)) f.problemas.push("ITBIS mayor que el monto");
+  if (f.monto > 0 && f.itbis < 0) f.problemas.push("ITBIS negativo");
+  if (!fechaValida(f.fecha)) f.problemas.push("fecha inválida");
+  else if (esFutura(f.fecha)) f.problemas.push("fecha futura");
+
   // una fila que el usuario ya excluyo a mano no se vuelve a incluir sola
   if (f.problemas.length) f.incluir = false;
   else if (antes || f.manual) f.incluir = true;
+}
+
+function fechaValida(f){
+  if (!f || !f.a || !f.m || !f.d) return false;
+  const a = +f.a, m = +f.m, d = +f.d;
+  if (a < 2000 || a > 2100 || m < 1 || m > 12 || d < 1) return false;
+  return d <= new Date(a, m, 0).getDate();      // dia real de ese mes
+}
+
+/* Una compra con fecha posterior a hoy no puede haber ocurrido: casi siempre
+   es un ano o un mes mal tecleado. */
+function esFutura(f){
+  const hoy = new Date();
+  const d = new Date(+f.a, +f.m - 1, +f.d);
+  hoy.setHours(23,59,59,999);
+  return d > hoy;
 }
 
 /* Refresca la etiqueta de estado y el color de una fila sin reconstruir la
@@ -656,6 +691,36 @@ const TIPOS_PROBLEMA = {
            "Búscalo en la factura física o en el portal de la DGII y escríbelo en la tabla.",
     nivel: "err",
   },
+  "sin monto": {
+    titulo: "Sin monto",
+    texto: "La DGII exige el total facturado (campo 10) en cada registro. " +
+           "Escribe el monto de la factura, sin el ITBIS.",
+    nivel: "err",
+  },
+  "ITBIS mayor que el monto": {
+    titulo: "El ITBIS supera al monto",
+    texto: "El ITBIS no puede ser mayor que la base sobre la que se calcula. " +
+           "Normalmente es que se escribió el total con impuestos en la columna " +
+           "de monto, o que se invirtieron las dos cifras.",
+    nivel: "err",
+  },
+  "ITBIS negativo": {
+    titulo: "ITBIS negativo en una factura",
+    texto: "Solo una nota de crédito lleva cifras en negativo. Si es una " +
+           "factura normal, revisa el signo.",
+    nivel: "err",
+  },
+  "fecha inválida": {
+    titulo: "Fecha que no existe",
+    texto: "Revisa el día y el mes: la fecha que quedó no corresponde a un día real.",
+    nivel: "err",
+  },
+  "fecha futura": {
+    titulo: "Fecha posterior a hoy",
+    texto: "Una compra no puede tener fecha futura. Casi siempre es un año o un " +
+           "mes mal tecleado.",
+    nivel: "err",
+  },
   "rnc-largo": {
     titulo: "RNC con cantidad de dígitos inválida",
     texto: "Un RNC tiene 9 dígitos y una cédula 11. Estos tienen otra cantidad, " +
@@ -682,10 +747,15 @@ const TIPOS_PROBLEMA = {
   },
 };
 
+const PROBLEMAS_CONOCIDOS = [
+  "sin RNC", "sin NCF", "NCF con formato inusual",
+  "sin monto", "ITBIS mayor que el monto", "ITBIS negativo",
+  "fecha inválida", "fecha futura",
+];
 function claveProblema(p){
-  if (p === "sin RNC" || p === "sin NCF" || p === "NCF con formato inusual") return p;
+  if (PROBLEMAS_CONOCIDOS.includes(p)) return p;
   if (/^RNC de \d+ d/.test(p)) return "rnc-largo";
-  return "otro-tipo";
+  return "otro-tipo";      // el tipo de transaccion que trae el informe
 }
 
 function pintarProblemas(){
