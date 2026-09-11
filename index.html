@@ -101,6 +101,7 @@ tr:last-child td{border-bottom:0}
 td.num{text-align:right; font-variant-numeric:tabular-nums; font-family:var(--mono); font-size:12px}
 td.mono{font-family:var(--mono); font-size:12px}
 tr.issue{background:var(--error-soft)}
+tr.manual td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 tr.excluded{opacity:.45}
 tr.excluded td:not(.act){text-decoration:line-through}
 .tag{
@@ -109,12 +110,18 @@ tr.excluded td:not(.act){text-decoration:line-through}
 }
 .tag.err{background:var(--error-soft); color:var(--error); border:1px solid currentColor}
 .tag.ok{background:var(--accent-soft); color:var(--accent)}
-select,input[type=text]{
+select,input[type=text],input[type=date],input[type=number]{
   font-family:var(--sans); font-size:12.5px; color:var(--ink);
   background:var(--surface); border:1px solid var(--line-2);
   border-radius:4px; padding:4px 6px; max-width:100%;
 }
 input[type=text]{font-family:var(--mono); width:112px}
+input[type=date],input[type=number]{font-family:var(--mono)}
+/* cada campo agregado a mano se dimensiona a lo que escribe de verdad */
+input[data-k="proveedor"]{font-family:var(--sans); width:190px}
+input[data-k="ncf"]{width:140px}
+input[data-k="monto"],input[data-k="itbis"]{width:100px; text-align:right}
+input[data-k="fecha"]{width:140px}
 select:focus,input:focus{outline:2px solid var(--accent); outline-offset:1px}
 .act button{
   font:inherit; font-size:12px; cursor:pointer; color:var(--ink-2);
@@ -130,6 +137,11 @@ select:focus,input:focus{outline:2px solid var(--accent); outline-offset:1px}
   border:0; border-radius:var(--radius); padding:11px 22px;
 }
 .btn:hover{filter:brightness(1.08)}
+.btn.ghost{
+  background:transparent; color:var(--accent);
+  box-shadow:inset 0 0 0 1px var(--line-2); padding:9px 16px;
+}
+.btn.ghost:hover{background:var(--accent-soft); filter:none}
 .btn:disabled{opacity:.4; cursor:not-allowed; filter:none}
 .btn:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
 .hint{color:var(--ink-3); font-size:13px}
@@ -212,7 +224,9 @@ pre{
   }
   tbody td.num{text-align:left; justify-content:flex-start}
   tbody td:first-child, tbody td.act{grid-column:1 / -1}
-  input[type=text]{width:100%}
+  input[type=text],input[type=date],input[type=number],
+  input[data-k="proveedor"],input[data-k="ncf"],
+  input[data-k="monto"],input[data-k="itbis"],input[data-k="fecha"]{width:100%}
   select{width:100%}
 }
 footer{margin-top:48px; padding-top:20px; border-top:1px solid var(--line);
@@ -276,6 +290,11 @@ footer a{color:var(--accent)}
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
+    </div>
+
+    <div class="bar" style="margin-top:12px">
+      <button class="btn ghost" id="add-row">+ Agregar comprobante</button>
+      <span class="hint">Para facturas que no estaban en el informe de QuickBooks.</span>
     </div>
   </section>
 
@@ -474,15 +493,22 @@ function pintar(){
     if (filtro === "incluidos" && !f.incluir) return;
     const tr = document.createElement("tr");
     if (f.problemas.length) tr.className = "issue";
+    if (f.manual) tr.className += " manual";
     if (!f.incluir) tr.className += " excluded";
     tr.innerHTML = `
       <td>${f.problemas.length
           ? `<span class="tag err">${f.problemas[0]}</span>`
           : `<span class="tag ok">listo</span>`}</td>
-      <td data-l="Fecha" class="mono">${f.fechaTxt}</td>
-      <td data-l="Proveedor">${esc(f.proveedor)}</td>
+      <td data-l="Fecha" class="mono">${f.manual
+          ? `<input type="date" value="${f.fecha.a}-${f.fecha.m}-${f.fecha.d}" data-i="${i}" data-k="fecha">`
+          : f.fechaTxt}</td>
+      <td data-l="Proveedor">${f.manual
+          ? `<input type="text" value="${esc(f.proveedor)}" data-i="${i}" data-k="proveedor" placeholder="Nombre del proveedor">`
+          : esc(f.proveedor)}</td>
       <td data-l="RNC" class="mono"><input type="text" value="${f.rnc}" data-i="${i}" data-k="rnc" maxlength="11" inputmode="numeric"></td>
-      <td data-l="NCF" class="mono">${esc(f.ncf) || "—"}</td>
+      <td data-l="NCF" class="mono">${f.manual
+          ? `<input type="text" value="${esc(f.ncf)}" data-i="${i}" data-k="ncf" maxlength="19" placeholder="B0100000001">`
+          : (esc(f.ncf) || "—")}</td>
       <td data-l="Tipo"><select data-i="${i}" data-k="tipo">${
           TIPOS_GASTO.map(([v,l]) => `<option value="${v}"${v===f.tipo?" selected":""}>${l}</option>`).join("")
       }</select></td>
@@ -490,28 +516,56 @@ function pintar(){
             <option value="B"${f.clase==="B"?" selected":""}>Bien</option>
             <option value="S"${f.clase==="S"?" selected":""}>Servicio</option>
           </select></td>
-      <td data-l="Monto" class="num">${f.monto.toFixed(2)}</td>
-      <td data-l="ITBIS" class="num">${f.itbis.toFixed(2)}</td>
-      <td class="act"><button data-i="${i}" data-k="toggle">${f.incluir?"Excluir":"Incluir"}</button></td>`;
+      <td data-l="Monto" class="num">${f.manual
+          ? `<input type="number" step="0.01" value="${f.monto}" data-i="${i}" data-k="monto" class="num">`
+          : f.monto.toFixed(2)}</td>
+      <td data-l="ITBIS" class="num">${f.manual
+          ? `<input type="number" step="0.01" value="${f.itbis}" data-i="${i}" data-k="itbis" class="num">`
+          : f.itbis.toFixed(2)}</td>
+      <td class="act">${f.manual
+          ? `<button data-i="${i}" data-k="borrar" title="Quitar esta fila">Quitar</button>`
+          : `<button data-i="${i}" data-k="toggle">${f.incluir?"Excluir":"Incluir"}</button>`}</td>`;
     tb.appendChild(tr);
   });
 
   tb.oninput = e => {
     const t = e.target, i = t.dataset.i, k = t.dataset.k;
     if (i == null) return;
+    const f = filas[i];
     if (k === "rnc"){
-      filas[i].rnc = t.value.replace(/\D/g,"");
-      revalidar(filas[i]);
-      pintar();
-    } else if (k === "tipo" || k === "clase"){
-      filas[i][k] = t.value;
+      f.rnc = t.value.replace(/\D/g,"");
+      revalidar(f);
+      marcarEstado(t, f);             // se actualiza la celda, no toda la tabla:
+      pintarProblemas();              // reconstruirla haria perder el foco
+    }
+    if (k === "tipo" || k === "clase"){
+      f[k] = t.value;
+    } else if (k === "proveedor"){
+      f.proveedor = t.value;
+    } else if (k === "ncf"){
+      f.ncf = t.value.trim().toUpperCase();
+      revalidar(f);
+      marcarEstado(t, f);
+      pintarProblemas();
+    } else if (k === "monto" || k === "itbis"){
+      f[k] = parseFloat(t.value) || 0;
+    } else if (k === "fecha"){
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t.value);
+      if (m){
+        f.fecha = {a:m[1], m:m[2], d:m[3]};
+        f.fechaTxt = `${m[3]}/${m[2]}/${m[1]}`;
+      }
     }
     resumen();
   };
   tb.onclick = e => {
-    if (e.target.dataset.k === "toggle"){
+    const k = e.target.dataset.k;
+    if (k === "toggle"){
       const f = filas[e.target.dataset.i];
       f.incluir = !f.incluir;
+      pintar();
+    } else if (k === "borrar"){
+      filas.splice(e.target.dataset.i, 1);
       pintar();
     }
   };
@@ -519,11 +573,46 @@ function pintar(){
 }
 
 function revalidar(f){
+  const antes = f.problemas.length > 0;
   f.problemas = [];
   if (!f.rnc) f.problemas.push("sin RNC");
   else if (f.rnc.length !== 9 && f.rnc.length !== 11) f.problemas.push(`RNC de ${f.rnc.length} dígitos`);
   if (!f.ncf) f.problemas.push("sin NCF");
-  f.incluir = f.problemas.length === 0;
+  else if (!/^[BE]\d{10,12}$/.test(f.ncf)) f.problemas.push("NCF con formato inusual");
+  // una fila que el usuario ya excluyo a mano no se vuelve a incluir sola
+  if (f.problemas.length) f.incluir = false;
+  else if (antes || f.manual) f.incluir = true;
+}
+
+/* Refresca la etiqueta de estado y el color de una fila sin reconstruir la
+   tabla, para no arrancarle el foco al campo que se esta escribiendo. */
+function marcarEstado(input, f){
+  const tr = input.closest("tr");
+  if (!tr) return;
+  tr.querySelector("td:first-child").innerHTML = f.problemas.length
+    ? `<span class="tag err">${esc(f.problemas[0])}</span>`
+    : `<span class="tag ok">listo</span>`;
+  tr.classList.toggle("issue", f.problemas.length > 0);
+  tr.classList.toggle("excluded", !f.incluir);
+  const btn = tr.querySelector('button[data-k="toggle"]');
+  if (btn) btn.textContent = f.incluir ? "Excluir" : "Incluir";
+}
+
+/* Facturas que no venian en el informe de QuickBooks: se agregan aqui en vez
+   de tener que editar el Excel y volver a subirlo. */
+function filaNueva(){
+  const hoy = filas.length ? filas[filas.length - 1].fecha : (() => {
+    const d = new Date();
+    return {a:String(d.getFullYear()), m:String(d.getMonth()+1).padStart(2,"0"),
+            d:String(d.getDate()).padStart(2,"0")};
+  })();
+  return {
+    fecha: {...hoy}, fechaTxt: `${hoy.d}/${hoy.m}/${hoy.a}`,
+    proveedor: "", rnc: "", ncf: "", cuenta: "",
+    tipo: "02", clase: "S", monto: 0, itbis: 0,
+    problemas: ["sin RNC", "sin NCF"], incluir: false,
+    manual: true,
+  };
 }
 
 function resumen(){
@@ -812,6 +901,25 @@ function mostrarSelectorDeMes(meses){
     `<option value="${m}">${MES[+m.slice(4) - 1]} ${m.slice(0,4)}</option>`).join("");
   document.getElementById("mes-campo").classList.remove("hidden");
 }
+
+/* Agregar un comprobante a mano: la fila nace vacia y marcada en rojo, y se
+   vuelve valida sola en cuanto tenga RNC y NCF correctos. */
+document.getElementById("add-row").onclick = () => {
+  filas.push(filaNueva());
+  document.getElementById("result").classList.remove("hidden");
+  if (filtro === "incluidos"){          // si no, la fila nueva no se veria
+    filtro = "todos";
+    document.querySelectorAll("#filtros button").forEach(x =>
+      x.setAttribute("aria-pressed", x.dataset.f === "todos"));
+  }
+  pintar();
+  const tr = document.querySelector("#tbody tr:last-child");
+  if (tr){
+    tr.scrollIntoView({behavior:"smooth", block:"center"});
+    const primero = tr.querySelector('input[data-k="proveedor"]');
+    if (primero) primero.focus();
+  }
+};
 
 /* RNC recordado entre visitas */
 const rncInput = document.getElementById("rnc");
