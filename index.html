@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>606 Express</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#f7f9fa; --surface:#ffffff; --sunken:#eef2f4;
+  --ink:#0f1419; --ink-2:#4a5860; --ink-3:#7a888f;
+  --line:#dde4e8; --line-2:#c5d0d6;
+  --accent:#0d6e5c; --accent-ink:#ffffff; --accent-soft:#e6f2ef;
+  --error:#b8341f; --error-soft:#fdecea;
+  --warn:#9a6b00; --warn-soft:#fdf4e3;
+  --ok:#0d6e5c;
+  --radius:6px;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1416; --surface:#161e21; --sunken:#1c262a;
+    --ink:#e8eef0; --ink-2:#a8b6bc; --ink-3:#76858c;
+    --line:#263338; --line-2:#35454c;
+    --accent:#3fb89c; --accent-ink:#04120e; --accent-soft:#132923;
+    --error:#ff8a72; --error-soft:#2b1512;
+    --warn:#e0aa4a; --warn-soft:#2a2011;
+    --ok:#3fb89c;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1416; --surface:#161e21; --sunken:#1c262a;
+  --ink:#e8eef0; --ink-2:#a8b6bc; --ink-3:#76858c;
+  --line:#263338; --line-2:#35454c;
+  --accent:#3fb89c; --accent-ink:#04120e; --accent-soft:#132923;
+  --error:#ff8a72; --error-soft:#2b1512;
+  --warn:#e0aa4a; --warn-soft:#2a2011;
+  --ok:#3fb89c;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:var(--sans); font-size:15px; line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:40px 24px 80px}
+
+header{display:flex; flex-direction:column; gap:6px; margin-bottom:32px}
+.eyebrow{
+  font-size:11px; font-weight:600; letter-spacing:.09em; text-transform:uppercase;
+  color:var(--accent);
+}
+h1{margin:0; font-size:30px; font-weight:600; letter-spacing:-.02em; text-wrap:balance}
+.lede{margin:0; color:var(--ink-2); max-width:62ch}
+
+.step{margin-top:28px}
+.step-head{display:flex; align-items:baseline; gap:10px; margin-bottom:12px}
+.step-n{
+  font-family:var(--mono); font-size:12px; color:var(--ink-3);
+  border:1px solid var(--line); border-radius:3px; padding:1px 6px;
+}
+.step-t{font-size:15px; font-weight:600}
+
+/* ── paso 1: subir ── */
+#drop{
+  border:1.5px dashed var(--line-2); border-radius:var(--radius);
+  background:var(--surface); padding:44px 24px; text-align:center;
+  cursor:pointer; transition:border-color .15s, background .15s;
+}
+#drop:hover,#drop.over{border-color:var(--accent); background:var(--accent-soft)}
+#drop:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+#drop p{margin:0 0 4px; font-weight:500}
+#drop small{color:var(--ink-3)}
+
+/* ── resumen ── */
+.sum{display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
+     border-radius:var(--radius); background:var(--surface); overflow:hidden}
+.sum div{flex:1 1 150px; padding:14px 18px; border-right:1px solid var(--line)}
+.sum div:last-child{border-right:0}
+.sum dt{margin:0 0 2px; font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-3)}
+.sum dd{margin:0; font-size:20px; font-weight:600; font-variant-numeric:tabular-nums}
+.sum dd.bad{color:var(--error)}
+.sum dd.good{color:var(--ok)}
+
+/* ── tabla ── */
+.tablewrap{overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:13px}
+th{
+  text-align:left; font-size:11px; letter-spacing:.05em; text-transform:uppercase;
+  color:var(--ink-3); font-weight:600; padding:10px 12px;
+  background:var(--sunken); border-bottom:1px solid var(--line); white-space:nowrap;
+  position:sticky; top:0;
+}
+td{padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:middle}
+tr:last-child td{border-bottom:0}
+td.num{text-align:right; font-variant-numeric:tabular-nums; font-family:var(--mono); font-size:12px}
+td.mono{font-family:var(--mono); font-size:12px}
+tr.issue{background:var(--error-soft)}
+tr.excluded{opacity:.45}
+tr.excluded td:not(.act){text-decoration:line-through}
+.tag{
+  display:inline-block; font-size:10.5px; font-weight:600; letter-spacing:.03em;
+  padding:2px 7px; border-radius:10px; white-space:nowrap;
+}
+.tag.err{background:var(--error-soft); color:var(--error); border:1px solid currentColor}
+.tag.ok{background:var(--accent-soft); color:var(--accent)}
+select,input[type=text]{
+  font-family:var(--sans); font-size:12.5px; color:var(--ink);
+  background:var(--surface); border:1px solid var(--line-2);
+  border-radius:4px; padding:4px 6px; max-width:100%;
+}
+input[type=text]{font-family:var(--mono); width:112px}
+select:focus,input:focus{outline:2px solid var(--accent); outline-offset:1px}
+.act button{
+  font:inherit; font-size:12px; cursor:pointer; color:var(--ink-2);
+  background:none; border:1px solid var(--line-2); border-radius:4px; padding:3px 8px;
+}
+.act button:hover{border-color:var(--accent); color:var(--accent)}
+
+/* ── acciones ── */
+.bar{display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:20px}
+.btn{
+  font:inherit; font-weight:600; font-size:14px; cursor:pointer;
+  background:var(--accent); color:var(--accent-ink);
+  border:0; border-radius:var(--radius); padding:11px 22px;
+}
+.btn:hover{filter:brightness(1.08)}
+.btn:disabled{opacity:.4; cursor:not-allowed; filter:none}
+.btn:focus-visible{outline:2px solid var(--ink); outline-offset:2px}
+.hint{color:var(--ink-3); font-size:13px}
+
+.field{display:flex; align-items:center; gap:8px}
+.field label{font-size:13px; color:var(--ink-2)}
+
+pre{
+  margin:14px 0 0; padding:14px; background:var(--sunken); border:1px solid var(--line);
+  border-radius:var(--radius); overflow-x:auto;
+  font-family:var(--mono); font-size:11.5px; line-height:1.7; color:var(--ink-2);
+}
+.hidden{display:none}
+.note{
+  margin-top:10px; padding:11px 14px; border-left:3px solid var(--warn);
+  background:var(--warn-soft); color:var(--ink-2); font-size:13px; border-radius:0 4px 4px 0;
+}
+
+/* ── panel de problemas ── */
+.issues{margin-top:16px; display:flex; flex-direction:column; gap:10px}
+.issue-card{
+  display:flex; gap:12px; align-items:flex-start;
+  border:1px solid var(--line); border-left:3px solid var(--error);
+  background:var(--surface); border-radius:0 var(--radius) var(--radius) 0;
+  padding:13px 16px;
+}
+.issue-card.is-warn{border-left-color:var(--warn)}
+.issue-card .ic-body{flex:1; min-width:0}
+.issue-card h4{margin:0 0 3px; font-size:13.5px; font-weight:600}
+.issue-card p{margin:0 0 8px; font-size:13px; color:var(--ink-2)}
+.issue-card .who{font-family:var(--mono); font-size:11.5px; color:var(--ink-3);
+                 word-break:break-word}
+.ic-actions{display:flex; flex-wrap:wrap; gap:8px; margin-top:9px}
+.ic-actions button{
+  font:inherit; font-size:12.5px; font-weight:500; cursor:pointer;
+  padding:5px 12px; border-radius:5px; border:1px solid var(--line-2);
+  background:var(--surface); color:var(--ink);
+}
+.ic-actions button:hover{border-color:var(--accent); color:var(--accent)}
+.ic-actions button.primary{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
+.ic-actions button.primary:hover{filter:brightness(1.08); color:var(--accent-ink)}
+.ic-count{
+  flex-shrink:0; font-family:var(--mono); font-size:12px; font-weight:500;
+  color:var(--error); background:var(--error-soft);
+  border-radius:4px; padding:3px 8px; min-width:30px; text-align:center;
+}
+.is-warn .ic-count{color:var(--warn); background:var(--warn-soft)}
+.all-good{
+  display:flex; align-items:center; gap:10px; margin-top:16px;
+  border:1px solid var(--accent); background:var(--accent-soft);
+  border-radius:var(--radius); padding:13px 16px; color:var(--ink);
+  font-size:13.5px;
+}
+.filtros{display:flex; flex-wrap:wrap; gap:6px; margin:14px 0 0}
+.filtros button{
+  font:inherit; font-size:12.5px; cursor:pointer; padding:5px 12px;
+  border-radius:20px; border:1px solid var(--line-2);
+  background:var(--surface); color:var(--ink-2);
+}
+.filtros button[aria-pressed="true"]{
+  background:var(--ink); color:var(--bg); border-color:var(--ink);
+}
+
+/* ── responsive ── */
+@media (max-width:760px){
+  .wrap{padding:28px 16px 60px}
+  h1{font-size:24px}
+  .sum div{flex:1 1 44%; border-right:0; border-bottom:1px solid var(--line)}
+  .tablewrap{max-height:none}
+  table{font-size:12px}
+  thead{display:none}
+  tbody tr{
+    display:grid; grid-template-columns:auto 1fr; gap:2px 10px;
+    padding:12px; border-bottom:1px solid var(--line);
+  }
+  tbody td{border:0; padding:2px 0; display:flex; align-items:center; gap:8px}
+  tbody td::before{
+    content:attr(data-l); font-size:10.5px; letter-spacing:.05em;
+    text-transform:uppercase; color:var(--ink-3); min-width:78px; flex-shrink:0;
+  }
+  tbody td.num{text-align:left; justify-content:flex-start}
+  tbody td:first-child, tbody td.act{grid-column:1 / -1}
+  input[type=text]{width:100%}
+  select{width:100%}
+}
+footer{margin-top:48px; padding-top:20px; border-top:1px solid var(--line);
+       color:var(--ink-3); font-size:12.5px}
+footer a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <span class="eyebrow">QuickBooks → DGII</span>
+  <h1>606 Express</h1>
+  <p class="lede">Convierte el informe de transacciones de QuickBooks en el archivo de envío 606 de la DGII.
+  Todo ocurre en tu navegador: el archivo nunca sale de tu computadora.</p>
+</header>
+
+<section class="step">
+  <div class="step-head"><span class="step-n">1</span><span class="step-t">Sube el informe de QuickBooks</span></div>
+  <div id="drop" tabindex="0" role="button" aria-label="Seleccionar archivo Excel">
+    <p>Arrastra el archivo aquí o haz clic para elegirlo</p>
+    <small>Informe de transacciones en .xlsx — el mismo formato cada mes</small>
+  </div>
+  <input type="file" id="file" accept=".xlsx,.xls" class="hidden">
+</section>
+
+<div id="result" class="hidden">
+
+  <section class="step">
+    <div class="step-head"><span class="step-n">2</span><span class="step-t">Revisa antes de generar</span></div>
+    <div class="sum">
+      <div><dt>Período</dt><dd id="s-per">—</dd></div>
+      <div><dt>Registros</dt><dd id="s-tot">0</dd></div>
+      <div><dt>Se incluirán</dt><dd id="s-ok" class="good">0</dd></div>
+      <div><dt>Con problemas</dt><dd id="s-bad" class="bad">0</dd></div>
+      <div><dt>Monto</dt><dd id="s-monto">0.00</dd></div>
+      <div><dt>ITBIS</dt><dd id="s-itbis">0.00</dd></div>
+    </div>
+
+    <div id="issues" class="issues"></div>
+
+    <div class="filtros" id="filtros">
+      <button data-f="todos" aria-pressed="true">Todos</button>
+      <button data-f="problemas" aria-pressed="false">Solo con problemas</button>
+      <button data-f="incluidos" aria-pressed="false">Solo los que se incluirán</button>
+    </div>
+
+    <div class="bar">
+      <div class="field">
+        <label for="rnc">RNC de tu empresa</label>
+        <input type="text" id="rnc" maxlength="11" placeholder="131234567" inputmode="numeric">
+      </div>
+      <span class="hint" id="filtro-hint"></span>
+    </div>
+
+    <div class="tablewrap" style="max-height:460px; margin-top:14px">
+      <table>
+        <thead><tr>
+          <th>Estado</th><th>Fecha</th><th>Proveedor</th><th>RNC</th><th>NCF</th>
+          <th>Tipo de gasto</th><th>Clase</th><th>Monto</th><th>ITBIS</th><th></th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="step">
+    <div class="step-head"><span class="step-n">3</span><span class="step-t">Genera el archivo</span></div>
+    <div class="bar">
+      <button class="btn" id="gen">Descargar 606</button>
+      <span class="hint" id="gen-hint"></span>
+    </div>
+    <pre id="preview" class="hidden"></pre>
+  </section>
+</div>
+
+<footer>
+  Valida el archivo con la
+  <a href="https://dgii.gov.do/herramientas/formularios/pre-validacion/Paginas/default.aspx" target="_blank" rel="noopener">herramienta de pre-validación de la DGII</a>
+  antes de remitirlo por la Oficina Virtual.
+</footer>
+</div>
+
+<script>
+/* ─── Catálogos oficiales del 606 (instructivo DGII) ─── */
+const TIPOS_GASTO = [
+  ["01","01 · Gastos de personal"],
+  ["02","02 · Trabajos, suministros y servicios"],
+  ["03","03 · Arrendamientos"],
+  ["04","04 · Gastos de activos fijos"],
+  ["05","05 · Gastos de representación"],
+  ["06","06 · Otras deducciones admitidas"],
+  ["07","07 · Gastos financieros"],
+  ["08","08 · Gastos extraordinarios"],
+  ["09","09 · Compras y gastos del costo de venta"],
+  ["10","10 · Adquisiciones de activos"],
+  ["11","11 · Gastos de seguros"],
+];
+
+/* Mapeo de la cuenta contable de QuickBooks al tipo de gasto y a bien/servicio.
+   Se evalúa por prefijo de código de cuenta y, si no hay, por palabra clave. */
+const MAPEO = [
+  {re:/^5112|^611011|sueldo/i,            tipo:"01", clase:"S"},
+  {re:/^611081|preaviso|cesant/i,          tipo:"01", clase:"S"},
+  {re:/^6130|seguro/i,                     tipo:"11", clase:"S"},
+  {re:/^615011|uniforme/i,                 tipo:"01", clase:"B"},
+  {re:/^615013|dieta|vi[aá]tico/i,         tipo:"01", clase:"S"},
+  {re:/^615015|atenciones al personal/i,   tipo:"05", clase:"B"},
+  {re:/^615009|laboratorio/i,              tipo:"02", clase:"S"},
+  {re:/^512220|^624670|combustible/i,      tipo:"09", clase:"B"},
+  {re:/^512211|^624676|producto.*limpieza|suministro.*limpieza/i, tipo:"09", clase:"B"},
+  {re:/^512213|material.*mantenimiento/i,  tipo:"09", clase:"B"},
+  {re:/^512214|epp|fumigaci/i,             tipo:"09", clase:"B"},
+  {re:/^624675|suministro.*oficina/i,      tipo:"02", clase:"B"},
+  {re:/^624679|otros suministros/i,        tipo:"02", clase:"B"},
+  {re:/^624621|tel[eé]fono/i,              tipo:"02", clase:"S"},
+  {re:/^624624|servicio.*tecnol/i,         tipo:"02", clase:"S"},
+  {re:/^624620|peaje|parqueo/i,            tipo:"02", clase:"S"},
+  {re:/^6412|^6413|mantenimiento/i,        tipo:"02", clase:"S"},
+  {re:/^651061|representaci/i,             tipo:"05", clase:"S"},
+];
+function clasificar(cuenta){
+  const c = String(cuenta||"");
+  for (const m of MAPEO) if (m.re.test(c)) return {tipo:m.tipo, clase:m.clase};
+  return {tipo:"02", clase:"S"};          // por defecto: trabajos y servicios
+}
+
+let filas = [];
+
+/* ─── Entrada del archivo ─── */
+const drop = document.getElementById("drop"), file = document.getElementById("file");
+drop.onclick = () => file.click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); file.click(); } };
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over");
+  if (e.dataTransfer.files[0]) leer(e.dataTransfer.files[0]); };
+file.onchange = e => { if (e.target.files[0]) leer(e.target.files[0]); };
+
+function leer(f){
+  drop.innerHTML = `<p>${esc(f.name)}</p><small>Leyendo…</small>`;
+  const fr = new FileReader();
+  fr.onload = e => {
+    const wb = XLSX.read(new Uint8Array(e.target.result), {type:"array"});
+    const hoja = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(hoja, {header:1, raw:false, defval:""});
+    procesar(raw);
+    drop.innerHTML = `<p>${esc(f.name)}</p>` +
+      `<small>${filas.length} transacciones · haz clic para cambiar el archivo</small>`;
+  };
+  fr.onerror = () => {
+    drop.innerHTML = `<p>No se pudo leer el archivo</p>` +
+      `<small>Comprueba que sea un .xlsx exportado de QuickBooks</small>`;
+  };
+  fr.readAsArrayBuffer(f);
+}
+
+/* ─── Normalización ─── */
+const digitos = v => String(v||"").replace(/\D/g,"");
+const num = v => {
+  const n = parseFloat(String(v||"").replace(/[^\d.-]/g,""));
+  return isNaN(n) ? 0 : n;
+};
+function aFecha(v){                       // QuickBooks exporta MM/DD/YYYY
+  const m = String(v||"").match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return null;
+  return {a:m[3], m:m[1].padStart(2,"0"), d:m[2].padStart(2,"0")};
+}
+
+function procesar(raw){
+  // La cabecera es la fila que contiene "Fecha de la transacción"
+  let hi = raw.findIndex(r => r.some(c => /fecha de la transacc/i.test(String(c))));
+  if (hi < 0) hi = 4;
+  const cab = raw[hi].map(c => String(c).toLowerCase());
+  const col = re => cab.findIndex(c => re.test(c));
+  const iFecha = col(/fecha/), iTipo = col(/tipo/), iNum = col(/n[uú]mero/),
+        iNom = col(/^nombre$/), iDesc = col(/descripci/), iCta = col(/nombre de la cuenta/),
+        iImp = col(/^importe$/), iItb = col(/importe del impuesto/);
+
+  if (iFecha < 0 || iNum < 0 || iImp < 0){
+    document.getElementById("issues").innerHTML =
+      `<div class="issue-card"><span class="ic-count">!</span><div class="ic-body">
+        <h4>No reconozco este archivo</h4>
+        <p>Esperaba el informe de transacciones de QuickBooks, con las columnas
+        «Fecha de la transacción», «Número», «Nombre», «Descripción», «Nombre de la cuenta»
+        e «Importe». Revisa que sea el informe correcto.</p></div></div>`;
+    document.getElementById("result").classList.remove("hidden");
+    return;
+  }
+  filas = [];
+  for (let i = hi + 1; i < raw.length; i++){
+    const r = raw[i];
+    if (!r || !String(r[iFecha]||"").trim()) continue;
+    const f = aFecha(r[iFecha]);
+    if (!f) continue;
+
+    const rnc = digitos(r[iDesc]);
+    const ncf = String(r[iNum]||"").trim().toUpperCase();
+    const tipoTx = String(r[iTipo]||"").trim();
+    const {tipo, clase} = clasificar(r[iCta]);
+    const esNota = /cr[eé]dito/i.test(tipoTx);
+    const signo = esNota ? -1 : 1;
+
+    const problemas = [];
+    if (!rnc) problemas.push("sin RNC");
+    else if (rnc.length !== 9 && rnc.length !== 11) problemas.push(`RNC de ${rnc.length} dígitos`);
+    if (!ncf) problemas.push("sin NCF");
+    else if (!/^[BE]\d{10,12}$/.test(ncf)) problemas.push("NCF con formato inusual");
+    if (!/factura de proveedor|cr[eé]dito de proveedor/i.test(tipoTx)) problemas.push(tipoTx.toLowerCase());
+
+    filas.push({
+      fecha:f, fechaTxt:`${f.d}/${f.m}/${f.a}`,
+      proveedor:String(r[iNom]||"").trim(),
+      rnc, ncf, cuenta:String(r[iCta]||"").trim(),
+      tipo, clase,
+      monto:num(r[iImp]) * signo, itbis:num(r[iItb]) * signo,
+      problemas, incluir: problemas.length === 0,
+    });
+  }
+  pintar();
+}
+
+/* ─── Tabla y resumen ─── */
+function pintar(){
+  const tb = document.getElementById("tbody");
+  tb.innerHTML = "";
+  filas.forEach((f, i) => {
+    if (filtro === "problemas" && !f.problemas.length) return;
+    if (filtro === "incluidos" && !f.incluir) return;
+    const tr = document.createElement("tr");
+    if (f.problemas.length) tr.className = "issue";
+    if (!f.incluir) tr.className += " excluded";
+    tr.innerHTML = `
+      <td>${f.problemas.length
+          ? `<span class="tag err">${f.problemas[0]}</span>`
+          : `<span class="tag ok">listo</span>`}</td>
+      <td data-l="Fecha" class="mono">${f.fechaTxt}</td>
+      <td data-l="Proveedor">${esc(f.proveedor)}</td>
+      <td data-l="RNC" class="mono"><input type="text" value="${f.rnc}" data-i="${i}" data-k="rnc" maxlength="11" inputmode="numeric"></td>
+      <td data-l="NCF" class="mono">${esc(f.ncf) || "—"}</td>
+      <td data-l="Tipo"><select data-i="${i}" data-k="tipo">${
+          TIPOS_GASTO.map(([v,l]) => `<option value="${v}"${v===f.tipo?" selected":""}>${l}</option>`).join("")
+      }</select></td>
+      <td data-l="Clase"><select data-i="${i}" data-k="clase">
+            <option value="B"${f.clase==="B"?" selected":""}>Bien</option>
+            <option value="S"${f.clase==="S"?" selected":""}>Servicio</option>
+          </select></td>
+      <td data-l="Monto" class="num">${f.monto.toFixed(2)}</td>
+      <td data-l="ITBIS" class="num">${f.itbis.toFixed(2)}</td>
+      <td class="act"><button data-i="${i}" data-k="toggle">${f.incluir?"Excluir":"Incluir"}</button></td>`;
+    tb.appendChild(tr);
+  });
+
+  tb.oninput = e => {
+    const t = e.target, i = t.dataset.i, k = t.dataset.k;
+    if (i == null) return;
+    if (k === "rnc"){
+      filas[i].rnc = t.value.replace(/\D/g,"");
+      revalidar(filas[i]);
+      pintar();
+    } else if (k === "tipo" || k === "clase"){
+      filas[i][k] = t.value;
+    }
+    resumen();
+  };
+  tb.onclick = e => {
+    if (e.target.dataset.k === "toggle"){
+      const f = filas[e.target.dataset.i];
+      f.incluir = !f.incluir;
+      pintar();
+    }
+  };
+  resumen();
+}
+
+function revalidar(f){
+  f.problemas = [];
+  if (!f.rnc) f.problemas.push("sin RNC");
+  else if (f.rnc.length !== 9 && f.rnc.length !== 11) f.problemas.push(`RNC de ${f.rnc.length} dígitos`);
+  if (!f.ncf) f.problemas.push("sin NCF");
+  f.incluir = f.problemas.length === 0;
+}
+
+function resumen(){
+  const inc = filas.filter(f => f.incluir);
+  const bad = filas.filter(f => f.problemas.length).length;
+  const per = filas.length ? `${filas[0].fecha.m}/${filas[0].fecha.a}` : "—";
+  document.getElementById("s-per").textContent = per;
+  document.getElementById("s-tot").textContent = filas.length;
+  document.getElementById("s-ok").textContent = inc.length;
+  document.getElementById("s-bad").textContent = bad;
+  document.getElementById("s-monto").textContent =
+      inc.reduce((a,f) => a + f.monto, 0).toLocaleString("es-DO",{minimumFractionDigits:2, maximumFractionDigits:2});
+  document.getElementById("s-itbis").textContent =
+      inc.reduce((a,f) => a + f.itbis, 0).toLocaleString("es-DO",{minimumFractionDigits:2, maximumFractionDigits:2});
+
+  pintarProblemas();
+
+  document.getElementById("result").classList.remove("hidden");
+  document.getElementById("filtro-hint").textContent =
+      `${filas.length} transacciones leídas del informe`;
+}
+
+
+/* ─── Problemas agrupados, con explicación y acciones ─── */
+const TIPOS_PROBLEMA = {
+  "sin RNC": {
+    titulo: "Sin RNC del proveedor",
+    texto: "La DGII exige el RNC o cédula de cada proveedor (campo 1). En el informe de " +
+           "QuickBooks ese dato viene en la columna «Descripción» y está vacío. " +
+           "Búscalo en la factura física o en el portal de la DGII y escríbelo en la tabla.",
+    nivel: "err",
+  },
+  "rnc-largo": {
+    titulo: "RNC con cantidad de dígitos inválida",
+    texto: "Un RNC tiene 9 dígitos y una cédula 11. Estos tienen otra cantidad, " +
+           "normalmente por un dígito de más o de menos al teclearlos. Corrígelos en la tabla.",
+    nivel: "err",
+  },
+  "sin NCF": {
+    titulo: "Sin número de comprobante fiscal",
+    texto: "Sin NCF la DGII no puede identificar la compra. Estas transacciones no pueden " +
+           "reportarse en el 606; revísalas en QuickBooks o déjalas fuera.",
+    nivel: "err",
+  },
+  "NCF con formato inusual": {
+    titulo: "NCF con formato poco habitual",
+    texto: "Un NCF normal empieza por B o E seguido de 10 a 12 dígitos. Estos no siguen " +
+           "ese patrón: puede ser correcto (comprobantes antiguos) o un error de captura. Revísalos.",
+    nivel: "warn",
+  },
+  "otro-tipo": {
+    titulo: "No son facturas de proveedor",
+    texto: "El 606 reporta compras. Los cheques, transferencias y otros movimientos no van " +
+           "en este formato. Normalmente se excluyen.",
+    nivel: "warn",
+  },
+};
+
+function claveProblema(p){
+  if (p === "sin RNC" || p === "sin NCF" || p === "NCF con formato inusual") return p;
+  if (/^RNC de \d+ d/.test(p)) return "rnc-largo";
+  return "otro-tipo";
+}
+
+function pintarProblemas(){
+  const cont = document.getElementById("issues");
+  const grupos = {};
+  filas.forEach((f, i) => {
+    f.problemas.forEach(p => {
+      const k = claveProblema(p);
+      (grupos[k] = grupos[k] || []).push(i);
+    });
+  });
+
+  const claves = Object.keys(grupos);
+  if (!claves.length){
+    cont.innerHTML = `<div class="all-good">
+      <strong>Todo listo.</strong> Los ${filas.length} registros tienen RNC y NCF válidos.
+    </div>`;
+    return;
+  }
+
+  cont.innerHTML = claves.map(k => {
+    const info = TIPOS_PROBLEMA[k] || {titulo:k, texto:"", nivel:"warn"};
+    const idx = grupos[k];
+    const nombres = [...new Set(idx.map(i => filas[i].proveedor).filter(Boolean))];
+    const muestra = nombres.slice(0,4).join(" · ") + (nombres.length > 4 ? ` · y ${nombres.length-4} más` : "");
+    const algunoIncluido = idx.some(i => filas[i].incluir);
+    return `<div class="issue-card${info.nivel === "warn" ? " is-warn" : ""}">
+      <span class="ic-count">${idx.length}</span>
+      <div class="ic-body">
+        <h4>${info.titulo}</h4>
+        <p>${info.texto}</p>
+        <div class="who">${esc(muestra)}</div>
+        <div class="ic-actions">
+          <button data-grupo="${k}" data-accion="ver">Ver en la tabla</button>
+          <button data-grupo="${k}" data-accion="${algunoIncluido ? "excluir" : "incluir"}"
+                  class="${algunoIncluido ? "" : "primary"}">
+            ${algunoIncluido ? "Excluir todos" : "Incluir de todos modos"}
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+
+  cont.onclick = e => {
+    const b = e.target.closest("button"); if (!b) return;
+    const {grupo, accion} = b.dataset;
+    const idx = grupos[grupo] || [];
+    if (accion === "ver"){
+      filtro = "problemas";
+      document.querySelectorAll("#filtros button").forEach(x =>
+        x.setAttribute("aria-pressed", x.dataset.f === "problemas"));
+      pintar();
+      document.querySelector(".tablewrap").scrollIntoView({behavior:"smooth", block:"start"});
+    } else {
+      const incluir = accion === "incluir";
+      idx.forEach(i => { filas[i].incluir = incluir; });
+      pintar();
+    }
+  };
+}
+
+/* ─── Filtros de la tabla ─── */
+let filtro = "todos";
+document.getElementById("filtros").onclick = e => {
+  const b = e.target.closest("button"); if (!b) return;
+  filtro = b.dataset.f;
+  document.querySelectorAll("#filtros button").forEach(x =>
+    x.setAttribute("aria-pressed", x === b));
+  pintar();
+};
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ─── Generación del TXT ─── */
+function monto(v){ return v ? v.toFixed(2) : ""; }
+
+document.getElementById("gen").onclick = () => {
+  const rncEmpresa = digitos(document.getElementById("rnc").value);
+  const hint = document.getElementById("gen-hint");
+  if (rncEmpresa.length !== 9 && rncEmpresa.length !== 11){
+    hint.textContent = "Escribe el RNC de tu empresa (9 u 11 dígitos) para el encabezado.";
+    document.getElementById("rnc").focus();
+    return;
+  }
+  const inc = filas.filter(f => f.incluir);
+  if (!inc.length){ hint.textContent = "No hay registros válidos que incluir."; return; }
+
+  const periodo = `${inc[0].fecha.a}${inc[0].fecha.m}`;
+  const lineas = inc.map(f => {
+    const servicios = f.clase === "S" ? f.monto : 0;
+    const bienes    = f.clase === "B" ? f.monto : 0;
+    return [
+      f.rnc,                                   // 1  RNC del proveedor
+      f.rnc.length === 9 ? "1" : "2",          // 2  tipo de identificación
+      f.tipo,                                  // 3  tipo de bien o servicio
+      f.ncf,                                   // 4  NCF
+      "",                                      // 5  NCF modificado
+      `${f.fecha.a}${f.fecha.m}${f.fecha.d}`,  // 6  fecha del comprobante
+      "",                                      // 7  fecha de pago
+      monto(servicios),                        // 8  monto en servicios
+      monto(bienes),                           // 9  monto en bienes
+      monto(f.monto),                          // 10 total facturado
+      monto(f.itbis),                          // 11 ITBIS facturado
+      "",                                      // 12 ITBIS retenido
+      "",                                      // 13 ITBIS proporcionalidad
+      "",                                      // 14 ITBIS al costo
+      monto(f.itbis),                          // 15 ITBIS por adelantar
+      "",                                      // 16 deshabilitado por la DGII
+      "",                                      // 17 tipo de retención ISR
+      "",                                      // 18 monto de retención ISR
+      "",                                      // 19 deshabilitado por la DGII
+      "",                                      // 20 impuesto selectivo
+      "",                                      // 21 otros impuestos
+      "",                                      // 22 propina legal
+      "04",                                    // 23 forma de pago: a crédito
+    ].join("|");
+  });
+
+  const txt = [`606|${rncEmpresa}|${periodo}|${lineas.length}`, ...lineas].join("\r\n") + "\r\n";
+  const nombre = `DGII_F_606_${rncEmpresa}_${periodo}.TXT`;
+
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], {type:"text/plain"}));
+  a.download = nombre;
+  a.click();
+  URL.revokeObjectURL(a.href);
+
+  hint.textContent = `${nombre} — ${lineas.length} registros`;
+  const pre = document.getElementById("preview");
+  pre.classList.remove("hidden");
+  pre.textContent = [`606|${rncEmpresa}|${periodo}|${lineas.length}`, ...lineas.slice(0,6)].join("\n")
+                  + (lineas.length > 6 ? `\n… ${lineas.length - 6} registros más` : "");
+};
+
+/* RNC recordado entre visitas */
+const rncInput = document.getElementById("rnc");
+try { rncInput.value = localStorage.getItem("rnc606") || ""; } catch(e){}
+rncInput.oninput = () => { try { localStorage.setItem("rnc606", rncInput.value); } catch(e){} };
+</script>
+</body>
+</html>
