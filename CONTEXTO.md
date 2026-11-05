@@ -39,7 +39,8 @@ SheetJS (XLSX) desde cdnjs, para leer el `.xlsx`. Se carga por `<script src>`.
 
 ## El formato 606, en corto
 
-- Texto plano delimitado por `|` (**no** posicional), terminado en CRLF.
+- Texto plano delimitado por `|` (**no** posicional), CRLF entre líneas y **sin
+  salto después de la última**, igual que la herramienta oficial.
 - Encabezado: `606|{RNC empresa}|{AAAAMM}|{cantidad de registros}`
 - Detalle: **exactamente 23 campos** por línea.
 - Nombre del archivo: `DGII_F_606_{RNC}_{AAAAMM}.TXT`
@@ -49,8 +50,26 @@ SheetJS (XLSX) desde cdnjs, para leer el `.xlsx`. Se carga por `<script src>`.
   la revisión previa sea el corazón de la herramienta, no un adorno.
 
 Campos que se llenan hoy: 1 (RNC), 2 (tipo ID), 3 (tipo de gasto), 4 (NCF),
-6 (fecha), 8/9 (servicios/bienes), 10 (total), 11 (ITBIS), 15 (ITBIS a
-adelantar), 23 (forma de pago, fijo `04` = crédito). Los demás van vacíos.
+6 (fecha), 8/9 (servicios/bienes), 10 (total, sin impuestos), 11 (ITBIS),
+15 (ITBIS a adelantar, siempre con cifra), 20 (ISC), 21 (otros impuestos),
+22 (propina legal), 23 (forma de pago, fijo `04` = crédito). Los demás van vacíos.
+
+### La referencia: la herramienta oficial de la DGII
+
+La salida debe coincidir con la **Herramienta Formato 606** de la DGII (Excel
+con macro, «Versión 2025»). Reglas tomadas del código de su macro
+(`modServicios.GenerarArchivo` y `clsFormato606Validator`):
+
+- Total facturado (campo 10) = servicios + bienes, **mayor que 0**. Servicios,
+  bienes e impuestos **nunca negativos**: las notas de crédito (B04/E34) van en
+  positivo.
+- NCF: `B` + (01-04, 11-15, 17) + 8 dígitos, o `E` + (31-34, 41-45, 47) + 10
+  dígitos. Cualquier otro se rechaza.
+- Gastos menores (B13/E43): el RNC del proveedor debe ser el de la empresa.
+- ITBIS por adelantar (15) = facturado − llevado al costo; siempre con cifra.
+- ISC, otros impuestos y propina van en 20, 21 y 22, fuera del total.
+- La macro escribe los montos sin formato fijo (`3000`, `1345.47`); aquí se
+  dejan con 2 decimales, que el instructivo también acepta.
 
 Instructivo oficial:
 https://dgii.gov.do/publicacionesOficiales/bibliotecaVirtual/contribuyentes/formatoEnvioDatos/Documents/4-LlenadoyEnvioFormato606.pdf
@@ -147,9 +166,10 @@ Con el archivo real y con datos sintéticos. Todos pasan hoy:
 - Factura partida en 2, 3 y 6 líneas → un solo registro, montos sumados
 - RNC heredado entre líneas del mismo NCF
 - RNC embebido en texto libre → se extrae el correcto
-- Notas de crédito → monto negativo, se conserva el signo
+- Notas de crédito (B04/E34) → montos en positivo, como la herramienta de la DGII
 - Bienes y servicios en un mismo NCF → campos 8 y 9 separados, 8+9 = 10
-- Factura que se neutraliza a 0.00 → campo 10 sale `0.00`, no vacío
+- Factura que se neutraliza a 0.00 → se bloquea al generar (la DGII exige total > 0)
+- Líneas «10% ISC», «Otros Impuestos», «10% DE LEY» → campos 20, 21 y 22, fuera del total
 - Meses mezclados → se detiene y ofrece elegir el mes
 - Dos proveedores con el mismo NCF → no se mezclan
 - Suma de decimales con arrastre binario (0.1+0.2+0.3) → `0.60` en el TXT
@@ -204,7 +224,16 @@ Nada de esto está comprometido con el usuario — son opciones, no tareas.
       campos, unicidad de NCF y CRLF contra la especificación, pero la
       confirmación final la da esa herramienta. El usuario la corre.
 - [ ] Formatos **607** (ventas) y **608** (anulados), si los pide.
-- [ ] Retenciones de ITBIS/ISR (campos 12, 17, 18). Hoy van vacíos. Ojo: la DGII
+- [x] Retenciones de ITBIS/ISR (campos 7, 12, 17, 18). QuickBooks no las trae;
+      se **calculan** (objeto `RETENCION` y función `retencion()`). Se
+      identifican por comprobante E41/B11 o proveedor con cédula (11 dígitos),
+      criterio de la contadora. Tasas por defecto: ITBIS 100% (con cédula y NCF
+      normal, solo sobre servicios). ISR según el tipo de servicio, criterio de la
+      contadora: **profesional 15%** (tipo 02) y **no profesional 2%** (tipo 03);
+      la clase «Servicio profesional» sale de la cuenta (honorarios, legal,
+      contable…) y se cambia en la tabla. Alquiler 10% (tipo 01) y el código
+      03 para el 2% son supuestos, sin confirmar. Fecha de pago = fecha del
+      comprobante. Todo se ajusta en `RETENCION`. Ojo: la DGII
       exige que **el tipo y el monto de retención vayan juntos**, y que si se
       informa retención haya fecha de pago (campo 7).
 - [ ] Forma de pago (campo 23) está fija en `04` = compra a crédito. QuickBooks

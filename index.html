@@ -338,6 +338,7 @@ const TIPOS_GASTO = [
 /* Mapeo de la cuenta contable de QuickBooks al tipo de gasto y a bien/servicio.
    Se evalúa por prefijo de código de cuenta y, si no hay, por palabra clave. */
 const MAPEO = [
+  {re:/honorario|profesional|legal|abogad|notari|contab|auditor|consultor|asesor/i, tipo:"02", clase:"SP"},
   {re:/^5112|^611011|sueldo/i,            tipo:"01", clase:"S"},
   {re:/^611081|preaviso|cesant/i,          tipo:"01", clase:"S"},
   {re:/^6130|seguro/i,                     tipo:"11", clase:"S"},
@@ -354,6 +355,7 @@ const MAPEO = [
   {re:/^624621|tel[eé]fono/i,              tipo:"02", clase:"S"},
   {re:/^624624|servicio.*tecnol/i,         tipo:"02", clase:"S"},
   {re:/^624620|peaje|parqueo/i,            tipo:"02", clase:"S"},
+  {re:/^6310|alquiler|arrendamiento/i,     tipo:"03", clase:"S"},
   {re:/^6412|^6413|mantenimiento/i,        tipo:"02", clase:"S"},
   {re:/^651061|representaci/i,             tipo:"05", clase:"S"},
 ];
@@ -361,6 +363,84 @@ function clasificar(cuenta){
   const c = String(cuenta||"");
   for (const m of MAPEO) if (m.re.test(c)) return {tipo:m.tipo, clase:m.clase};
   return {tipo:"02", clase:"S"};          // por defecto: trabajos y servicios
+}
+
+/* Qué es cada línea: un bien, un servicio o uno de los impuestos que el 606
+   declara aparte. La herramienta oficial de la DGII deja el total facturado
+   (campo 10) sin impuestos y pone el ISC, los otros impuestos y la propina en
+   sus propios campos (20, 21 y 22). */
+const CLASES = [
+  ["B",    "Bien"],
+  ["S",    "Servicio"],
+  ["SP",   "Servicio profesional"],
+  ["ISC",  "Impuesto selectivo (ISC)"],
+  ["OTR",  "Otros impuestos/tasas"],
+  ["PROP", "Propina legal"],
+];
+const ES_IMPUESTO = c => c === "ISC" || c === "OTR" || c === "PROP";
+const ES_SERVICIO = c => c === "S" || c === "SP";
+
+/* QuickBooks registra los impuestos como líneas extra del mismo NCF, con el
+   impuesto escrito en «Descripción» (p. ej. «10% ISC», «2% Otros Impuestos»,
+   «10% DE LEY»). Una línea cuya descripción trae el RNC no es un impuesto. */
+function detectarImpuesto(desc){
+  const t = String(desc||"");
+  if (/(?<!\d)(\d{11}|\d{9})(?!\d)/.test(t)) return null;
+  if (/\bISC\b|selectivo|sectivo/i.test(t)) return "ISC";
+  if (/propina|de ley/i.test(t)) return "PROP";
+  if (/otros?\s+impuestos?|\bCDT\b|tasa/i.test(t)) return "OTR";
+  return null;
+}
+
+/* Patrones de NCF que acepta la herramienta oficial de la DGII:
+   B + tipo (01-04, 11-15, 17) + 8 dígitos, E + tipo (31-34, 41-45, 47) +
+   10 dígitos, o los antiguos de 19 caracteres (A, P o Q). */
+const NCF_DGII = /^(B(0[1-4]|1[1-5]|17)\d{8}|E(3[1-4]|4[1-5]|47)\d{10}|[APQ]\d{8}(0[1-4]|1[1-5])\d{8})$/;
+// tipo de comprobante dentro del NCF: B01 -> "01", E31 -> "31"
+const tipoNcf = ncf => ncf.length === 19 ? ncf.slice(9, 11) : ncf.slice(1, 3);
+const esNotaCredito = ncf => ["04", "34"].includes(tipoNcf(ncf));
+const esGastoMenor  = ncf => ["13", "43"].includes(tipoNcf(ncf));
+// comprobante de compras / proveedor informal: lo emite la empresa al pagarle a una persona fisica
+const esCompraInformal = ncf => ["11", "41"].includes(tipoNcf(ncf));
+
+/* Retenciones. Se aplican a los comprobantes de compras (E41/B11) y a los
+   proveedores con cédula (persona física). Tasas por defecto; ajústalas aquí
+   si el contador usa otras:
+   - ITBIS retenido (campo 12): 100% del ITBIS. Con cédula y comprobante normal
+     solo se retiene sobre servicios: la compra de bienes no lleva retención.
+   - ISR retenido (campos 17 y 18), según el tipo de servicio (criterio de la
+     contadora): servicio profesional 15% (tipo 02, honorarios); cualquier otro
+     servicio 2% (tipo 03, otras rentas). Un alquiler (tipo de gasto 03) lleva
+     10% (tipo 01). Si un comprobante mezcla, el tipo es el del monto mayor.
+   - Fecha de pago (campo 7): obligatoria con retención; se usa la del comprobante. */
+const RETENCION = {
+  itbis: 1.00,
+  profesional: {tasa: 0.15, tipo: "02"},
+  servicio:    {tasa: 0.02, tipo: "03"},
+  alquiler:    {tasa: 0.10, tipo: "01"},
+};
+
+function retencion(g){
+  const informal = esCompraInformal(g.ncf);
+  if (!informal && g.rnc.length !== 11) return null;
+  const itbisRet = r2((informal ? g.itbis : g.itbisServicios) * RETENCION.itbis);
+  let isr = 0, tipoIsr = "";
+  if (g.tipo === "03"){
+    isr = g.servicios * RETENCION.alquiler.tasa;
+    tipoIsr = RETENCION.alquiler.tipo;
+  } else {
+    const otros = g.servicios - g.serviciosProf;
+    isr = g.serviciosProf * RETENCION.profesional.tasa + otros * RETENCION.servicio.tasa;
+    tipoIsr = g.serviciosProf >= otros ? RETENCION.profesional.tipo : RETENCION.servicio.tipo;
+  }
+  isr = r2(isr);
+  if (!itbisRet && !isr) return null;
+  return {
+    itbis: itbisRet,
+    isr,
+    tipoIsr: isr ? tipoIsr : "",
+    fechaPago: `${g.fecha.a}${g.fecha.m}${g.fecha.d}`,
+  };
 }
 
 let filas = [];
@@ -461,7 +541,8 @@ function procesar(raw){
     const rnc = (rncLinea.length === 9 || rncLinea.length === 11)
               ? rncLinea : (rncPorNcf.get(ncf) || rncLinea);
     const tipoTx = String(r[iTipo]||"").trim();
-    const {tipo, clase} = clasificar(r[iCta]);
+    const cl = clasificar(r[iCta]);
+    const tipo = cl.tipo, clase = detectarImpuesto(r[iDesc]) || cl.clase;
     const esNota = /cr[eé]dito/i.test(tipoTx);
     const signo = esNota ? -1 : 1;
 
@@ -512,10 +593,9 @@ function pintar(){
       <td data-l="Tipo"><select data-i="${i}" data-k="tipo">${
           TIPOS_GASTO.map(([v,l]) => `<option value="${v}"${v===f.tipo?" selected":""}>${l}</option>`).join("")
       }</select></td>
-      <td data-l="Clase"><select data-i="${i}" data-k="clase">
-            <option value="B"${f.clase==="B"?" selected":""}>Bien</option>
-            <option value="S"${f.clase==="S"?" selected":""}>Servicio</option>
-          </select></td>
+      <td data-l="Clase"><select data-i="${i}" data-k="clase">${
+          CLASES.map(([v,l]) => `<option value="${v}"${v===f.clase?" selected":""}>${l}</option>`).join("")
+      }</select></td>
       <td data-l="Monto" class="num">${f.manual
           ? `<input type="number" step="0.01" value="${f.monto}" data-i="${i}" data-k="monto" class="num">`
           : f.monto.toFixed(2)}</td>
@@ -588,7 +668,7 @@ function revalidar(f){
   if (!f.rnc) f.problemas.push("sin RNC");
   else if (f.rnc.length !== 9 && f.rnc.length !== 11) f.problemas.push(`RNC de ${f.rnc.length} dígitos`);
   if (!f.ncf) f.problemas.push("sin NCF");
-  else if (!/^[BE]\d{10,12}$/.test(f.ncf)) f.problemas.push("NCF con formato inusual");
+  else if (!NCF_DGII.test(f.ncf)) f.problemas.push("NCF inválido");
 
   // Reglas de importe: la DGII rechaza el archivo completo por cualquiera de
   // estas, y en una fila escrita a mano son faciles de cometer.
@@ -663,7 +743,8 @@ function resumen(){
   document.getElementById("s-ok").textContent = registros;
   document.getElementById("s-bad").textContent = bad;
   document.getElementById("s-monto").textContent =
-      inc.reduce((a,f) => a + f.monto, 0).toLocaleString("es-DO",{minimumFractionDigits:2, maximumFractionDigits:2});
+      inc.filter(f => !ES_IMPUESTO(f.clase))
+         .reduce((a,f) => a + f.monto, 0).toLocaleString("es-DO",{minimumFractionDigits:2, maximumFractionDigits:2});
   document.getElementById("s-itbis").textContent =
       inc.reduce((a,f) => a + f.itbis, 0).toLocaleString("es-DO",{minimumFractionDigits:2, maximumFractionDigits:2});
 
@@ -733,11 +814,12 @@ const TIPOS_PROBLEMA = {
            "reportarse en el 606; revísalas en QuickBooks o déjalas fuera.",
     nivel: "err",
   },
-  "NCF con formato inusual": {
-    titulo: "NCF con formato poco habitual",
-    texto: "Un NCF normal empieza por B o E seguido de 10 a 12 dígitos. Estos no siguen " +
-           "ese patrón: puede ser correcto (comprobantes antiguos) o un error de captura. Revísalos.",
-    nivel: "warn",
+  "NCF inválido": {
+    titulo: "NCF que la DGII no acepta",
+    texto: "La DGII solo acepta B + tipo + 8 dígitos (11 caracteres) o E + tipo + 10 dígitos " +
+           "(13 caracteres), con un tipo de comprobante válido. Si entra uno de estos, la DGII " +
+           "rechaza el archivo completo. Corrígelo en QuickBooks o déjalo fuera.",
+    nivel: "err",
   },
   "otro-tipo": {
     titulo: "No son facturas de proveedor",
@@ -748,7 +830,7 @@ const TIPOS_PROBLEMA = {
 };
 
 const PROBLEMAS_CONOCIDOS = [
-  "sin RNC", "sin NCF", "NCF con formato inusual",
+  "sin RNC", "sin NCF", "NCF inválido",
   "sin monto", "ITBIS mayor que el monto", "ITBIS negativo",
   "fecha inválida", "fecha futura",
 ];
@@ -830,10 +912,12 @@ document.getElementById("filtros").onclick = e => {
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 /* ─── Generación del TXT ─── */
-/* Los importes opcionales van vacios cuando no aplican; el total facturado
-   (campo 10) siempre lleva cifra, aunque la factura se neutralice en 0.00. */
-function monto(v){ return v ? v.toFixed(2) : ""; }
-function montoObligatorio(v){ return (v || 0).toFixed(2); }
+/* Los importes opcionales van vacios cuando no aplican. El total facturado
+   (campo 10) y el ITBIS por adelantar (campo 15) siempre llevan cifra, como en
+   la herramienta oficial de la DGII. */
+const r2 = v => Math.round((v || 0) * 100) / 100;
+function monto(v){ return r2(v) ? r2(v).toFixed(2) : ""; }
+function montoObligatorio(v){ return r2(v).toFixed(2); }
 
 /* QuickBooks parte una misma factura en varias lineas (el servicio y sus
    recargos, o una compra repartida entre dos cuentas contables). La DGII
@@ -848,15 +932,24 @@ function consolidar(lista){
     let g = mapa.get(k);
     if (!g){
       g = {rnc:f.rnc, ncf:f.ncf, proveedor:f.proveedor, fecha:f.fecha, tipo:f.tipo,
-           servicios:0, bienes:0, monto:0, itbis:0, partes:0, mayor:0};
+           servicios:0, serviciosProf:0, bienes:0, monto:0, itbis:0, itbisServicios:0,
+           isc:0, otros:0, propina:0, partes:0, mayor:0};
       mapa.set(k, g);
     }
     if (!g.rnc && f.rnc) g.rnc = f.rnc;
-    // el tipo de gasto lo define la linea de mayor monto: es el gasto principal
-    if (Math.abs(f.monto) > g.mayor){ g.mayor = Math.abs(f.monto); g.tipo = f.tipo; }
-    if (f.clase === "S") g.servicios += f.monto; else g.bienes += f.monto;
-    g.monto += f.monto;
+    // los impuestos van en sus propios campos y no forman parte del total facturado
+    if (f.clase === "ISC")       g.isc     += f.monto;
+    else if (f.clase === "OTR")  g.otros   += f.monto;
+    else if (f.clase === "PROP") g.propina += f.monto;
+    else {
+      // el tipo de gasto lo define la linea de mayor monto: es el gasto principal
+      if (Math.abs(f.monto) > g.mayor){ g.mayor = Math.abs(f.monto); g.tipo = f.tipo; }
+      if (ES_SERVICIO(f.clase)) g.servicios += f.monto; else g.bienes += f.monto;
+      if (f.clase === "SP") g.serviciosProf += f.monto;
+      g.monto += f.monto;
+    }
     g.itbis += f.itbis;
+    if (ES_SERVICIO(f.clase)) g.itbisServicios += f.itbis;
     g.partes++;
     const actual = g.fecha.a + g.fecha.m + g.fecha.d;
     const otra   = f.fecha.a + f.fecha.m + f.fecha.d;
@@ -905,7 +998,39 @@ document.getElementById("gen").onclick = () => {
     .map(f => f.ncf))];
   if (partidos.length && !confirmarParcial(partidos)) return;
 
-  const lineas = consolidar(delMes).map(f => {
+  const registros = consolidar(delMes).map(g => {
+    /* La DGII declara las notas de credito con importes positivos; QuickBooks
+       las exporta en negativo. */
+    let r = g;
+    if (esNotaCredito(g.ncf)){
+      const abs = v => Math.abs(v);
+      r = {...g, servicios:abs(g.servicios), bienes:abs(g.bienes), monto:abs(g.monto),
+           serviciosProf:abs(g.serviciosProf),
+           itbis:abs(g.itbis), itbisServicios:abs(g.itbisServicios),
+           isc:abs(g.isc), otros:abs(g.otros), propina:abs(g.propina)};
+    }
+    return {...r, ret: retencion(r)};
+  });
+
+  /* Reglas de la herramienta oficial de la DGII que se miden por comprobante,
+     no por linea: si alguna falla, la DGII rechaza el archivo completo. */
+  const negativo = registros.filter(g =>
+    r2(g.monto) <= 0 || r2(g.servicios) < 0 || r2(g.bienes) < 0 || r2(g.itbis) < 0 ||
+    r2(g.isc) < 0 || r2(g.otros) < 0 || r2(g.propina) < 0);
+  if (negativo.length){
+    hint.textContent = "La DGII exige un total facturado mayor que 0 y ningún importe negativo. " +
+      "Revisa o excluye: " + negativo.slice(0, 5).map(g => g.ncf).join(", ") +
+      (negativo.length > 5 ? ` y ${negativo.length - 5} más` : "") + ".";
+    return;
+  }
+  const menores = registros.filter(g => esGastoMenor(g.ncf) && g.rnc !== rncEmpresa);
+  if (menores.length){
+    hint.textContent = "En los comprobantes de gastos menores (B13/E43) la DGII exige el RNC " +
+      "de tu propia empresa como proveedor. Corrige: " + menores.map(g => g.ncf).join(", ") + ".";
+    return;
+  }
+
+  const lineas = registros.map(f => {
     return [
       f.rnc,                                   // 1  RNC del proveedor
       f.rnc.length === 9 ? "1" : "2",          // 2  tipo de identificación
@@ -913,27 +1038,28 @@ document.getElementById("gen").onclick = () => {
       f.ncf,                                   // 4  NCF
       "",                                      // 5  NCF modificado
       `${f.fecha.a}${f.fecha.m}${f.fecha.d}`,  // 6  fecha del comprobante
-      "",                                      // 7  fecha de pago
+      f.ret ? f.ret.fechaPago : "",            // 7  fecha de pago (obligatoria con retención)
       monto(f.servicios),                      // 8  monto en servicios
       monto(f.bienes),                         // 9  monto en bienes
       montoObligatorio(f.monto),               // 10 total facturado
       monto(f.itbis),                          // 11 ITBIS facturado
-      "",                                      // 12 ITBIS retenido
+      f.ret ? monto(f.ret.itbis) : "",         // 12 ITBIS retenido
       "",                                      // 13 ITBIS proporcionalidad
       "",                                      // 14 ITBIS al costo
-      monto(f.itbis),                          // 15 ITBIS por adelantar
-      "",                                      // 16 deshabilitado por la DGII
-      "",                                      // 17 tipo de retención ISR
-      "",                                      // 18 monto de retención ISR
-      "",                                      // 19 deshabilitado por la DGII
-      "",                                      // 20 impuesto selectivo
-      "",                                      // 21 otros impuestos
-      "",                                      // 22 propina legal
+      montoObligatorio(f.itbis),               // 15 ITBIS por adelantar (facturado - al costo)
+      "",                                      // 16 ITBIS percibido
+      f.ret ? f.ret.tipoIsr : "",              // 17 tipo de retención ISR (va junto al 18)
+      f.ret ? monto(f.ret.isr) : "",           // 18 monto de retención ISR
+      "",                                      // 19 ISR percibido
+      monto(f.isc),                            // 20 impuesto selectivo al consumo
+      monto(f.otros),                          // 21 otros impuestos/tasas
+      monto(f.propina),                        // 22 propina legal
       "04",                                    // 23 forma de pago: a crédito
     ].join("|");
   });
 
-  const txt = [`606|${rncEmpresa}|${periodo}|${lineas.length}`, ...lineas].join("\r\n") + "\r\n";
+  // como la herramienta de la DGII: CRLF entre lineas, sin salto despues de la ultima
+  const txt = [`606|${rncEmpresa}|${periodo}|${lineas.length}`, ...lineas].join("\r\n");
   const nombre = `DGII_F_606_${rncEmpresa}_${periodo}.TXT`;
 
   const a = document.createElement("a");
@@ -942,7 +1068,13 @@ document.getElementById("gen").onclick = () => {
   a.click();
   URL.revokeObjectURL(a.href);
 
-  hint.textContent = `${nombre} — ${lineas.length} ${lineas.length === 1 ? "registro" : "registros"}`;
+  const conRet = registros.filter(g => g.ret);
+  hint.textContent = `${nombre} — ${lineas.length} ${lineas.length === 1 ? "registro" : "registros"}` +
+    (conRet.length
+      ? ` · retenciones en ${conRet.length} (E41 o cédula): ITBIS ` +
+        conRet.reduce((a,g) => a + g.ret.itbis, 0).toFixed(2) + ", ISR " +
+        conRet.reduce((a,g) => a + g.ret.isr, 0).toFixed(2)
+      : "");
   const pre = document.getElementById("preview");
   pre.classList.remove("hidden");
   pre.textContent = [`606|${rncEmpresa}|${periodo}|${lineas.length}`, ...lineas.slice(0,6)].join("\n")

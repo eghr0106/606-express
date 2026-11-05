@@ -24,8 +24,10 @@ la herramienta los detecta primero y explica cada caso:
 | Sin RNC | El campo 1 es obligatorio; en QuickBooks viene en «Descripción» |
 | RNC con dígitos inválidos | Un RNC tiene 9 dígitos, una cédula 11 |
 | Sin NCF | Sin comprobante fiscal no se puede reportar |
-| NCF con formato inusual | No sigue el patrón B/E + 10-12 dígitos |
+| NCF inválido | No es B + tipo + 8 dígitos ni E + tipo + 10 dígitos |
 | No es factura de proveedor | Cheques y transferencias no van en el 606 |
+| Total en cero o negativo | La DGII exige un total mayor que 0 (se revisa al generar) |
+| Gasto menor con RNC ajeno | En B13/E43 el proveedor debe ser tu propia empresa |
 
 Cada grupo ofrece incluir o excluir en bloque, y el RNC se puede corregir a mano
 en la tabla.
@@ -37,6 +39,8 @@ El 606 pide datos que QuickBooks no exporta. Se deducen de la cuenta contable y
 
 - **Tipo de gasto** (campo 3) — p. ej. `512220 Combustible` → `09 Costo de venta`
 - **Bien o servicio** (campos 8 y 9) — Teléfonos → servicio, Combustible → bien
+- **Impuestos aparte** (campos 20, 21 y 22) — las líneas «ISC», «Otros Impuestos»
+  y «Propina / 10% de ley» no suman al total facturado
 
 ## Antes de remitir
 
