@@ -121,7 +121,7 @@ input[type=date],input[type=number]{font-family:var(--mono)}
 input[data-k="proveedor"]{font-family:var(--sans); width:190px}
 input[data-k="ncf"]{width:140px}
 input[data-k="monto"],input[data-k="itbis"]{width:100px; text-align:right}
-input[data-k="fecha"]{width:140px}
+input[data-k="fecha"],input[data-k="fechaPago"]{width:140px}
 select:focus,input:focus{outline:2px solid var(--accent); outline-offset:1px}
 .act button{
   font:inherit; font-size:12px; cursor:pointer; color:var(--ink-2);
@@ -226,7 +226,8 @@ pre{
   tbody td:first-child, tbody td.act{grid-column:1 / -1}
   input[type=text],input[type=date],input[type=number],
   input[data-k="proveedor"],input[data-k="ncf"],
-  input[data-k="monto"],input[data-k="itbis"],input[data-k="fecha"]{width:100%}
+  input[data-k="monto"],input[data-k="itbis"],input[data-k="fecha"],
+  input[data-k="fechaPago"]{width:100%}
   select{width:100%}
 }
 footer{margin-top:48px; padding-top:20px; border-top:1px solid var(--line);
@@ -286,7 +287,8 @@ footer a{color:var(--accent)}
       <table>
         <thead><tr>
           <th>Estado</th><th>Fecha</th><th>Proveedor</th><th>RNC</th><th>NCF</th>
-          <th>Tipo de gasto</th><th>Clase</th><th>Monto</th><th>ITBIS</th><th></th>
+          <th>Tipo de gasto</th><th>Clase</th><th>Monto</th><th>ITBIS</th>
+          <th title="Solo en comprobantes con retención (E41 o cédula)">Fecha de pago</th><th></th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -413,6 +415,11 @@ const esCompraInformal = ncf => ["11", "41"].includes(tipoNcf(ncf));
      servicio 2% (tipo 03, otras rentas). Un alquiler (tipo de gasto 03) lleva
      10% (tipo 01). Si un comprobante mezcla, el tipo es el del monto mayor.
    - Fecha de pago (campo 7): obligatoria con retención; se usa la del comprobante. */
+// una linea lleva retencion si su comprobante es de compras o el proveedor tiene cedula
+const llevaRetencion = f => esCompraInformal(f.ncf || "") || String(f.rnc || "").length === 11;
+const aTexto  = f => `${f.a}${f.m}${f.d}`;
+const isoFecha = f => `${f.a}-${f.m}-${f.d}`;
+
 const RETENCION = {
   itbis: 1.00,
   profesional: {tasa: 0.15, tipo: "02"},
@@ -439,7 +446,8 @@ function retencion(g){
     itbis: itbisRet,
     isr,
     tipoIsr: isr ? tipoIsr : "",
-    fechaPago: `${g.fecha.a}${g.fecha.m}${g.fecha.d}`,
+    // por defecto la de la factura; se puede cambiar en la tabla
+    fechaPago: aTexto(g.fechaPago || g.fecha),
   };
 }
 
@@ -602,6 +610,10 @@ function pintar(){
       <td data-l="ITBIS" class="num">${f.manual
           ? `<input type="number" step="0.01" value="${f.itbis}" data-i="${i}" data-k="itbis" class="num">`
           : f.itbis.toFixed(2)}</td>
+      <td data-l="Fecha de pago" class="mono">${llevaRetencion(f)
+          ? `<input type="date" value="${isoFecha(f.fechaPago || f.fecha)}" data-i="${i}" data-k="fechaPago"
+                    title="Por defecto, la fecha de la factura">`
+          : "—"}</td>
       <td class="act">${f.manual
           ? `<button data-i="${i}" data-k="borrar" title="Quitar esta fila">Quitar</button>`
           : `<button data-i="${i}" data-k="toggle">${f.incluir?"Excluir":"Incluir"}</button>`}</td>`;
@@ -630,6 +642,13 @@ function pintar(){
     } else if (k === "monto" || k === "itbis"){
       f[k] = parseFloat(t.value) || 0;
       revalidar(f);                 // el monto tambien decide si la fila es valida
+      marcarEstado(t, f);
+      pintarProblemas();
+    } else if (k === "fechaPago"){
+      // vacio vuelve al valor por defecto: la fecha de la factura
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t.value);
+      f.fechaPago = m ? {a:m[1], m:m[2], d:m[3]} : null;
+      revalidar(f);
       marcarEstado(t, f);
       pintarProblemas();
     } else if (k === "fecha"){
@@ -677,6 +696,10 @@ function revalidar(f){
   if (f.monto > 0 && f.itbis < 0) f.problemas.push("ITBIS negativo");
   if (!fechaValida(f.fecha)) f.problemas.push("fecha inválida");
   else if (esFutura(f.fecha)) f.problemas.push("fecha futura");
+  else if (f.fechaPago && llevaRetencion(f)){
+    if (!fechaValida(f.fechaPago)) f.problemas.push("fecha de pago inválida");
+    else if (aTexto(f.fechaPago) < aTexto(f.fecha)) f.problemas.push("pago antes de la factura");
+  }
 
   // una fila que el usuario ya excluyo a mano no se vuelve a incluir sola
   if (f.problemas.length) f.incluir = false;
@@ -796,6 +819,18 @@ const TIPOS_PROBLEMA = {
     texto: "Revisa el día y el mes: la fecha que quedó no corresponde a un día real.",
     nivel: "err",
   },
+  "fecha de pago inválida": {
+    titulo: "Fecha de pago que no existe",
+    texto: "La fecha de pago es obligatoria cuando hay retención (campo 7). " +
+           "Revisa el día y el mes, o bórrala para usar la fecha de la factura.",
+    nivel: "err",
+  },
+  "pago antes de la factura": {
+    titulo: "Pago anterior a la factura",
+    texto: "La fecha de pago no puede ser anterior a la fecha del comprobante. " +
+           "Corrígela, o bórrala para usar la fecha de la factura.",
+    nivel: "err",
+  },
   "fecha futura": {
     titulo: "Fecha posterior a hoy",
     texto: "Una compra no puede tener fecha futura. Casi siempre es un año o un " +
@@ -832,7 +867,7 @@ const TIPOS_PROBLEMA = {
 const PROBLEMAS_CONOCIDOS = [
   "sin RNC", "sin NCF", "NCF inválido",
   "sin monto", "ITBIS mayor que el monto", "ITBIS negativo",
-  "fecha inválida", "fecha futura",
+  "fecha inválida", "fecha futura", "fecha de pago inválida", "pago antes de la factura",
 ];
 function claveProblema(p){
   if (PROBLEMAS_CONOCIDOS.includes(p)) return p;
@@ -937,6 +972,7 @@ function consolidar(lista){
       mapa.set(k, g);
     }
     if (!g.rnc && f.rnc) g.rnc = f.rnc;
+    if (!g.fechaPago && f.fechaPago) g.fechaPago = f.fechaPago;   // la que se edito en la tabla
     // los impuestos van en sus propios campos y no forman parte del total facturado
     if (f.clase === "ISC")       g.isc     += f.monto;
     else if (f.clase === "OTR")  g.otros   += f.monto;

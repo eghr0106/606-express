@@ -232,8 +232,9 @@ Nada de esto está comprometido con el usuario — son opciones, no tareas.
       contadora: **profesional 15%** (tipo 02) y **no profesional 2%** (tipo 03);
       la clase «Servicio profesional» sale de la cuenta (honorarios, legal,
       contable…) y se cambia en la tabla. Alquiler 10% (tipo 01) y el código
-      03 para el 2% son supuestos, sin confirmar. Fecha de pago = fecha del
-      comprobante. Todo se ajusta en `RETENCION`. Ojo: la DGII
+      03 para el 2% son supuestos, sin confirmar. Fecha de pago: por defecto
+      la del comprobante (supuesto), **editable** en la tabla en las filas con
+      retención; no puede ser anterior a la factura. Tasas en `RETENCION`. Ojo: la DGII
       exige que **el tipo y el monto de retención vayan juntos**, y que si se
       informa retención haya fecha de pago (campo 7).
 - [ ] Forma de pago (campo 23) está fija en `04` = compra a crédito. QuickBooks
